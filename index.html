@@ -177,6 +177,8 @@ body.reach-flash{animation:reachFlash .6s ease}
 .ht.hdora{border:2px solid #ffd700!important;background:linear-gradient(160deg,#fffde8,#fff8c0)!important;box-shadow:0 0 5px rgba(255,215,0,.45)!important}
 .ht.hdng{border:2px solid #ff2222!important;background:linear-gradient(160deg,#fff0f0,#ffc0c0)!important}
 .ht.hsafe{border:2px solid #00e676!important;background:linear-gradient(160deg,#f0fff4,#c0ffd8)!important}
+.ht.hbold{border:2px solid #2ecc71!important;background:linear-gradient(160deg,#d0ffe8,#90ffbb)!important;box-shadow:0 0 8px rgba(46,204,113,.7)!important}
+.ht.hop{border:2px solid #27ae60!important;background:linear-gradient(160deg,#f0fff4,#c0ffd8)!important;opacity:0.5!important}
 .hwarn{color:#f88;font-size:11px;font-weight:bold;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.2);border-radius:4px;padding:3px 7px;margin:3px 0}
 .hgood{color:#7f7;font-size:11px;font-weight:bold;background:rgba(80,255,80,.08);border:1px solid rgba(80,255,80,.2);border-radius:4px;padding:3px 7px;margin:3px 0}
 .ypat{background:rgba(255,215,0,.06);border:1px solid rgba(255,215,0,.22);border-radius:6px;padding:5px 7px;margin:3px 0}
@@ -728,9 +730,10 @@ function yakuDetect(hand,res,openMelds,ctx){
   const expandedOpenMelds=openMelds.map(m=>m.t==='K'?{...m,t:'k'}:m);
   const allM=[...mentsu,...expandedOpenMelds];if(allM.length!==3)return[];
   const isOpen=openMelds.length>0;const yaku=[];
-  const allTiles=[...hand,...openMelds.flatMap(m=>m.t==='k'
-    ?[new Tile(m.char,m.num),new Tile(m.char,m.num),new Tile(m.char,m.num)]
-    :[new Tile(m.char,m.num),new Tile(m.char,m.num+1),new Tile(m.char,m.num+2)])];
+  const allTiles=[...hand,...openMelds.flatMap(m=>
+    m.t==='k'||m.t==='K'  // 刻子・カン
+      ?[new Tile(m.char,m.num),new Tile(m.char,m.num),new Tile(m.char,m.num),(m.t==='K'?new Tile(m.char,m.num):null)].filter(Boolean)
+      :[new Tile(m.char,m.num),new Tile(m.char,m.num+1),new Tile(m.char,m.num+2)])];
   const seqs=allM.filter(m=>m.t==='s'),tris=allM.filter(m=>m.t==='k');
 
   if(!isOpen&&ctx.isDoubleReach)yaku.push({name:'ダブルリーチ',han:2});
@@ -748,7 +751,8 @@ function yakuDetect(hand,res,openMelds,ctx){
   if(tris.length===3){
     // ★ 対々和: 鳴きがある場合のみ1翻 (門前は三暗刻が付くので対々和は不要)
     if(isOpen)yaku.push({name:'対々和',han:1});
-    if(ctx.isTsumo&&tris.filter(m=>!m.open).length===3)yaku.push({name:'三暗刻',han:2});
+    // 三暗刻: 3面子全て暗刻(門前)。ロンでも成立(暗刻3つでの和了)
+    if(tris.filter(m=>!m.open).length===3)yaku.push({name:'三暗刻',han:2});
   }
   if(seqs.length===3&&new Set(seqs.map(m=>m.char)).size===3&&new Set(seqs.map(m=>m.num)).size===1)
     yaku.push({name:'三色同順',han:isOpen?1:2});
@@ -1076,6 +1080,10 @@ class Net{
     else if(type==='KAN_DORA'){
       doraIndicators=[...msg.doraIndicators];
       uraDoraIndicators=[...msg.uraDoraIndicators];
+      // ★ ゲスト側のデッキ同期: ホストがカンドラ用にpopした分を消費
+      const prevLen=doraIndicators.length-1; // 今回追加分
+      if(this.eng.deck.length>0)this.eng.deck.pop(); // ドラ表示牌分
+      if(this.eng.deck.length>0)this.eng.deck.pop(); // 裏ドラ分
       this.eng._render();if(this.eng._hintOn)this.eng._renderHint();
       this.eng.log('🎴 カンドラ追加','imp');
     }
@@ -1337,20 +1345,34 @@ class GameEngine{
           rp.discards.forEach(d=>confirmedSafe.add(d.char*10+d.num));
         }
       });
-      const allSafe=[...confirmedSafe].map(k=>({char:Math.floor(k/10),num:k%10}));
-      // 手牌内の安全牌
-      const safeInHand=[];const seenSafe=new Set();
-      p.hand.forEach(t=>{const k=t.char*10+t.num;if(confirmedSafe.has(k)&&!seenSafe.has(k)){seenSafe.add(k);safeInHand.push(t);}});
-      // 全安全牌 (重複排除)
+      // 全安全牌 (重複排除、キャラ順・数字順にソート)
       const seenAll=new Set();
-      const allSafeUniq=allSafe.filter(t=>{const k=t.char*10+t.num;if(seenAll.has(k))return false;seenAll.add(k);return true;});
+      const allSafeUniq=[...confirmedSafe]
+        .map(k=>({char:Math.floor(k/10),num:k%10}))
+        .filter(t=>{const k=t.char*10+t.num;if(seenAll.has(k))return false;seenAll.add(k);return true;})
+        .sort((a,b)=>a.char!==b.char?a.char-b.char:a.num-b.num);
+      // 手牌内の安全牌
+      const safeInHand=allSafeUniq.filter(t=>p.hand.some(h=>h.char===t.char&&h.num===t.num));
       if(allSafeUniq.length>0){
-        html+=`<div class="hs"><div class="hs-t">🟢 安全牌リスト (ロン見送り＋リーチ者捨て牌)</div>`;
-        if(allSafeUniq.length>0)
-          html+=`<div class="hr"><span class="hl" style="min-width:55px">確実安全:</span><div class="hts" style="flex-wrap:wrap">${allSafeUniq.slice(0,16).map(t=>this._ht(t,'hsafe')).join('')}</div></div>`;
+        html+=`<div class="hs"><div class="hs-t">🟢 安全牌リスト (キャラ別・数字順)</div>`;
+        // キャラ別にグループ化して表示
+        const safeByChar={};
+        allSafeUniq.forEach(t=>{if(!safeByChar[t.char])safeByChar[t.char]=[];safeByChar[t.char].push(t);});
+        Object.entries(safeByChar).forEach(([ci,tiles])=>{
+          const charIdx=parseInt(ci);
+          const inHandKeys=new Set(safeInHand.map(t=>t.char*10+t.num));
+          html+=`<div class="hr" style="align-items:center;margin-bottom:2px">`+
+            `<span style="font-size:16px;min-width:26px;text-align:center">${CHARS[charIdx]}</span>`+
+            `<div class="hts" style="flex-wrap:wrap">${tiles.map(t=>{
+              const isInHand=inHandKeys.has(t.char*10+t.num);
+              return this._ht(t,isInHand?'hsafe hbold':'hsafe hop');
+            }).join('')}</div></div>`;
+        });
         if(safeInHand.length>0)
-          html+=`<div class="hr"><span class="hl" style="min-width:55px">手牌内:</span><div class="hts">${safeInHand.map(t=>this._ht(t,'hsafe')).join('')}</div></div>`;
-        html+=`<div style="font-size:9.5px;color:#7f7;padding:2px 4px">🟢 緑枠 = ロンされなかった確実安全牌。迷ったら優先的に捨てよう</div></div>`;
+          html+=`<div style="font-size:9.5px;color:#7f7;padding:2px 4px">🟢 濃い緑 = 手牌内の安全牌 / 薄い緑 = 既に捨てるか持っていない安全牌</div>`;
+        else
+          html+=`<div style="font-size:9.5px;color:#7f7;padding:2px 4px">🟢 緑枠 = 確実安全牌。迷ったら優先的に捨てよう</div>`;
+        html+=`</div>`;
       }
     }
 
@@ -1834,7 +1856,7 @@ class GameEngine{
     if(act==='DRAW'){
       // ★ デッキは必ずpopして同期を維持。手牌にはmsg.tileを追加(deckTileは捨てる)
       if(this.deck.length)this.deck.pop(); // ★ デッキ消費だけ行う
-      const tile=msg.tile?Tile.fr(msg.tile):(this.deck.length?this.deck[this.deck.length]:null);
+      const tile=msg.tile?Tile.fr(msg.tile):null; // ★ msg.tileが必須、なければnull
       if(tile){
         SFX.draw();
         p.hand.push(tile);if(!p.isReach)p.sortHand();p.firstDraw=false;
@@ -1997,7 +2019,7 @@ class GameEngine{
         if(p.idx===this.lastDiscardFrom||(!p.isCpuFill&&p.isNet)||!p.ai)continue;
         if(p.ai.shouldRon(p.waiting,this.lastDiscard,p.hand,p.melds,p.isReach)){
           const hand2=[...p.hand,this.lastDiscard];const res=checkWin(hand2,p.melds);const dc2=this.lastDiscard;
-          const ctx={isReach:p.isReach,isDoubleReach:p.isDoubleReach||false,isTsumo:false,ippatsu:p.ippatsu};
+          const ctx={isReach:p.isReach,isDoubleReach:p.isDoubleReach||false,isTsumo:false,ippatsu:p.ippatsu,isHoutei:this.deck.length===0};
           const yaku=yakuDetect(hand2,res,p.melds,ctx);
           if(validWin(yaku,false)){
             this._ronWinners.push({player:p,hand:hand2,yaku,mentsu:[...res.mentsu,...p.melds],loserIdx:this.lastDiscardFrom,winTile:dc2,isCpu:true});
@@ -2163,7 +2185,7 @@ class GameEngine{
     this.lastDiscard=null;this.lastDiscardFrom=-1;
     // ★ ポン発生 → 全員の一発消失
     this.players.forEach(q=>{q.ippatsu=false;});
-    this.log(p.name+': '+tile.face+tile.num+' ポン！','imp');SFX.pon();if(p.idx===this.mySlot)FX.pon();
+    this.log(p.name+': '+CHARS[tile.char]+tile.num+' ポン！','imp');SFX.pon();if(p.idx===this.mySlot)FX.pon();
     this.curIdx=p.idx;p.selIdx=-1;p.upWait();p.justPonned=true;
     if(p.idx===this.mySlot)this.state='DISCARD';
     else if(p.isCpuFill||(!p.isNet&&p.ai))this.state='CPU';
@@ -2498,7 +2520,7 @@ class GameEngine{
       }
       this._showFinal(null,-1,'ダブルロン',0);
     }else{
-      this._showOv('次のラウンド','','[]',[],null,null,null,'次のラウンドへ ▶');
+      this._showOv('次のラウンド','',[],[],null,null,null,'次のラウンドへ ▶');
     }
   }
 
